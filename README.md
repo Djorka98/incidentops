@@ -4,6 +4,8 @@ IncidentOps es una API REST para gestionar el ciclo de vida de incidentes operat
 
 Está pensado como backend de portfolio y como base técnica para una herramienta interna de operaciones: separa transporte HTTP, reglas de negocio y persistencia, no expone entidades JPA directamente y mantiene PostgreSQL como fuente de verdad del esquema mediante Flyway.
 
+Producción: [https://incidentops.vercel.app](https://incidentops.vercel.app), ejecutada como contenedor HTTP en Vercel con Neon PostgreSQL como almacenamiento persistente externo.
+
 ## Funcionalidades
 
 - Registro e inicio de sesión con JWT.
@@ -19,7 +21,9 @@ Está pensado como backend de portfolio y como base técnica para una herramient
 - Bootstrap administrativo opcional y seguro para una instalación nueva.
 - PostgreSQL 18.6, Flyway y validación del modelo Hibernate.
 - Imagen multi-stage y ejecución no privilegiada en Docker.
-- Suite automatizada de 65 pruebas.
+- Landing pública mínima sin información operativa sensible.
+- CORS restringido al origen configurado mediante `FRONTEND_URL`.
+- Suite automatizada de 70 pruebas.
 
 ## Stack
 
@@ -29,24 +33,26 @@ Está pensado como backend de portfolio y como base técnica para una herramient
 | Framework | Spring Boot 4.1.1 |
 | Web | Spring MVC |
 | Persistencia | Spring Data JPA + Hibernate |
-| Base de datos | PostgreSQL 18.6 |
+| Base de datos | PostgreSQL 18.6 local / Neon PostgreSQL en producción |
 | Migraciones | Flyway |
 | Seguridad | Spring Security, OAuth2 Resource Server y JWT |
 | Documentación | SpringDoc OpenAPI 3.1.1 |
 | Testing | JUnit Platform, Mockito, Spring Boot Test, MockMvc y H2 |
 | Build | Maven Wrapper / Maven 3.9.16 |
-| Contenedores | Docker y Docker Compose |
+| Contenedores | Docker, Docker Compose y Vercel Containers |
+| Producción | Vercel + Neon PostgreSQL |
 
 ## Arquitectura
 
 ```mermaid
 flowchart LR
-    Client[Cliente HTTP] --> Security[Spring Security / JWT]
+    Client[Cliente HTTP] --> Runtime[Docker local / Vercel Container]
+    Runtime --> Security[Spring Security / JWT]
     Security --> Controller[Controllers REST]
     Controller --> DTO[Request / Response DTOs]
     Controller --> Service[Servicios transaccionales]
     Service --> Repository[Spring Data repositories]
-    Repository --> DB[(PostgreSQL)]
+    Repository --> DB[(PostgreSQL / Neon)]
     Flyway[Flyway V1+] --> DB
     Service --> History[Historial y métricas]
     History --> Repository
@@ -129,7 +135,9 @@ Authorization: Bearer <JWT>
 | Listar usuarios | Sí | Sí | No |
 | Crear o modificar usuarios | Sí | No | No |
 
-`/api/auth/register` y `/api/auth/login` son públicos. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
+`GET /` ofrece una landing pública mínima que indica que IncidentOps API está activa. `/api/auth/register` y `/api/auth/login` también son públicos; el resto de la API conserva sus reglas de seguridad y su comportamiento normal. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
+
+CORS permite un único origen exacto configurado mediante `FRONTEND_URL`; no utiliza wildcard. Esta política controla el acceso desde navegadores, mientras Spring Security continúa aplicando autenticación y roles a todos los recursos protegidos.
 
 ## Bootstrap administrativo opcional
 
@@ -150,6 +158,8 @@ El bootstrap:
 - no vuelve a crear un administrador en reinicios posteriores.
 
 Después del primer arranque correcto, retire ambas variables del entorno. Mantenerlas no permite cambiar roles ni sobrescribir cuentas, pero retirarlas reduce la exposición accidental. El registro público continúa creando únicamente `VIEWER`.
+
+La base de producción ya fue inicializada. Las variables de bootstrap fueron retiradas de Vercel y no forman parte de la configuración permanente.
 
 ## Puesta en marcha con Docker
 
@@ -193,6 +203,29 @@ Requisitos: Docker Engine o Docker Desktop con Compose v2.
 
 No use `docker compose down -v` salvo que quiera borrar deliberadamente el volumen local de PostgreSQL. PostgreSQL no publica su puerto al host; el backend se conecta internamente a `postgres:5432` y expone la API en `http://localhost:8080`.
 
+## Deployment en Vercel
+
+Vercel construye [Dockerfile.vercel](Dockerfile.vercel) como un único contenedor HTTP. La imagen usa un build multi-stage con Java 25 y ejecuta el JAR Spring Boot como usuario no-root. PostgreSQL no vive dentro del contenedor: producción utiliza Neon mediante las variables JDBC del entorno.
+
+Spring escucha el puerto asignado por la plataforma:
+
+```properties
+server.port=${PORT:8080}
+```
+
+`PORT` es administrado por Vercel; el fallback `8080` conserva el comportamiento local. La configuración permanente del proyecto en Vercel requiere:
+
+```text
+SPRING_PROFILES_ACTIVE
+SPRING_DATASOURCE_URL
+SPRING_DATASOURCE_USERNAME
+SPRING_DATASOURCE_PASSWORD
+JWT_SECRET
+FRONTEND_URL
+```
+
+`FRONTEND_URL` debe contener el origen público exacto del frontend, sin wildcard. `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` no son permanentes: solo se usan juntas para inicializar una base vacía y después se retiran.
+
 ## Ejecución local sin Docker para el backend
 
 Se necesita Java 25 y una instancia PostgreSQL accesible. Configure el entorno antes de usar el wrapper:
@@ -203,6 +236,7 @@ $env:SPRING_DATASOURCE_URL = "jdbc:postgresql://localhost:5432/incidentops"
 $env:SPRING_DATASOURCE_USERNAME = "<database-user>"
 $env:SPRING_DATASOURCE_PASSWORD = "<database-password>"
 $env:JWT_SECRET = "<base64-encoded-256-bit-secret>"
+$env:FRONTEND_URL = "http://localhost:5173"
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -223,10 +257,12 @@ $env:SPRING_PROFILES_ACTIVE = "prod"
 | `SPRING_DATASOURCE_USERNAME` | Sí fuera de Compose | Usuario JDBC. |
 | `SPRING_DATASOURCE_PASSWORD` | Sí fuera de Compose | Contraseña JDBC. |
 | `JWT_SECRET` | Sí | Secreto Base64 con al menos 256 bits decodificados. |
-| `BOOTSTRAP_ADMIN_EMAIL` | No | Correo del primer ADMIN; vacío desactiva el bootstrap. |
-| `BOOTSTRAP_ADMIN_PASSWORD` | No | Contraseña temporal del primer ADMIN; vacío desactiva el bootstrap. |
+| `FRONTEND_URL` | Sí en producción | Origen exacto autorizado por CORS; localmente usa `http://localhost:5173` por defecto. |
+| `PORT` | Administrada | Puerto HTTP asignado por Vercel; localmente usa `8080` por defecto. |
+| `BOOTSTRAP_ADMIN_EMAIL` | Temporal | Correo del primer ADMIN; vacío desactiva el bootstrap. |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Temporal | Contraseña del primer ADMIN; debe retirarse después de inicializar una base vacía. |
 | `FLYWAY_BASELINE_ON_MIGRATE` | No | `false` por defecto; solo para incorporar conscientemente un esquema preexistente. |
-| `SPRING_PROFILES_ACTIVE` | No | `dev` o `prod`; Compose usa `dev`. |
+| `SPRING_PROFILES_ACTIVE` | Sí en producción | `dev` o `prod`; Compose usa `dev` y Vercel usa `prod`. |
 
 No confirme `.env`, tokens, contraseñas ni secretos. El repositorio solo conserva `.env.example` con placeholders.
 
@@ -257,6 +293,7 @@ En `prod` ambos recursos están deshabilitados.
 
 | Método | Ruta | Descripción | Acceso |
 |---|---|---|---|
+| `GET` | `/` | Landing mínima de disponibilidad | Público |
 | `POST` | `/api/auth/register` | Registra un `VIEWER` y devuelve JWT | Público |
 | `POST` | `/api/auth/login` | Autentica y devuelve JWT | Público |
 | `GET` | `/api/incidents` | Busca, filtra, ordena y pagina | Todos los roles |
@@ -356,7 +393,7 @@ Ejecute toda la suite:
 .\mvnw.cmd clean test
 ```
 
-Estado verificado: **65 tests, 0 failures, 0 errors, 0 skipped**.
+Estado verificado: **70 tests, 0 failures, 0 errors, 0 skipped**.
 
 La cobertura funcional incluye:
 
@@ -366,7 +403,8 @@ La cobertura funcional incluye:
 - transacciones e historial integrado;
 - migración Flyway V1 y búsquedas JPA sobre H2;
 - configuración criptográfica JWT;
-- bootstrap ADMIN, omisiones, BCrypt e idempotencia.
+- bootstrap ADMIN, omisiones, BCrypt e idempotencia;
+- CORS, landing pública y conservación de los límites de autorización.
 
 ## Estructura del proyecto
 
@@ -383,6 +421,7 @@ src/main/java/com/djorka/incidentops/
 
 src/main/resources/
 ├── db/migration/V1__baseline_schema.sql
+├── static/index.html
 ├── application.properties
 ├── application-dev.properties
 └── application-prod.properties
@@ -407,6 +446,8 @@ src/test/java/com/djorka/incidentops/
 - Perfiles para separar observabilidad de desarrollo y exposición de Swagger.
 - Bootstrap inicial opt-in, idempotente y sin credenciales hardcodeadas.
 - Contenedor runtime sin Maven y ejecutado con usuario no root.
+- `Dockerfile.vercel` separado del stack local y PostgreSQL persistente alojado externamente en Neon.
+- Puerto HTTP dinámico mediante `PORT` y CORS limitado a `FRONTEND_URL`.
 
 ## Limitaciones conocidas y próximos pasos
 
@@ -421,16 +462,16 @@ src/test/java/com/djorka/incidentops/
 
 ## Portfolio
 
-Este proyecto demuestra diseño de una API Spring Boot de extremo a extremo: modelado relacional, migraciones, seguridad stateless, autorización granular, validaciones, manejo de errores, pruebas unitarias y de integración, documentación OpenAPI y entrega reproducible con Docker.
+Este proyecto demuestra diseño de una API Spring Boot de extremo a extremo: modelado relacional, migraciones, seguridad stateless, autorización granular, validaciones, manejo de errores, pruebas unitarias y de integración, documentación OpenAPI y entrega reproducible con Docker, Vercel Containers y Neon PostgreSQL.
 
 Para una demostración breve:
 
-1. Arranque el stack con una base nueva y el bootstrap temporal.
-2. Inicie sesión como ADMIN desde Swagger.
-3. Registre un VIEWER y muestre la diferencia de permisos.
-4. Cree un incidente, avance su estado, cambie severidad y agregue un comentario.
-5. Consulte historial y métricas.
-6. Muestre Flyway V1 y la suite verde de 65 pruebas.
+1. Abra la landing pública en `/`.
+2. Para una demo local, arranque el stack con una base nueva y el bootstrap temporal.
+3. Inicie sesión como ADMIN desde Swagger en el perfil `dev`.
+4. Registre un VIEWER y muestre la diferencia de permisos.
+5. Cree un incidente, avance su estado, cambie severidad y agregue un comentario.
+6. Consulte historial, métricas, Flyway V1 y la suite verde de 69 pruebas.
 
 ## Licencia
 

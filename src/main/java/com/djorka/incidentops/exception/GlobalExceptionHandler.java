@@ -15,6 +15,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import jakarta.validation.ConstraintViolationException;
 
@@ -215,6 +216,24 @@ public class GlobalExceptionHandler {
 
                 return ResponseEntity
                                 .status(HttpStatus.BAD_REQUEST)
+                                .body(error);
+        }
+
+        @ExceptionHandler(NoResourceFoundException.class)
+        public ResponseEntity<Map<String, Object>> handleMissingResource(
+                        NoResourceFoundException exception,
+                        HttpServletRequest request) {
+
+                Map<String, Object> error = new HashMap<>();
+
+                error.put("timestamp", LocalDateTime.now());
+                error.put("status", HttpStatus.NOT_FOUND.value());
+                error.put("error", "Not Found");
+                error.put("message", "The requested resource was not found.");
+                error.put("path", request.getRequestURI());
+
+                return ResponseEntity
+                                .status(HttpStatus.NOT_FOUND)
                                 .body(error);
         }
 

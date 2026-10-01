@@ -7,25 +7,26 @@
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>4.1.1</version>
-		<relativePath /> <!-- lookup parent from repository -->
+		<relativePath />
 	</parent>
 	<groupId>com.djorka</groupId>
 	<artifactId>incidentops</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name />
-	<description />
-	<url />
+	<name>IncidentOps</name>
+	<description>Incident management REST API</description>
+	<url>https://github.com/Djorka98/incidentops</url>
 	<licenses>
-		<license />
+		<license>
+			<name>MIT License</name>
+			<url>https://opensource.org/licenses/MIT</url>
+			<distribution>repo</distribution>
+		</license>
 	</licenses>
-	<developers>
-		<developer />
-	</developers>
 	<scm>
-		<connection />
-		<developerConnection />
-		<tag />
-		<url />
+		<connection>scm:git:https://github.com/Djorka98/incidentops.git</connection>
+		<developerConnection>scm:git:https://github.com/Djorka98/incidentops.git</developerConnection>
+		<tag>HEAD</tag>
+		<url>https://github.com/Djorka98/incidentops</url>
 	</scm>
 	<properties>
 		<java.version>25</java.version>
