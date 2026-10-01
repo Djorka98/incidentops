@@ -37,7 +37,9 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -51,6 +53,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(SecurityConfig.class)
 @ImportAutoConfiguration({SecurityAutoConfiguration.class, ServletWebSecurityAutoConfiguration.class})
 class SecurityAuthorizationTest {
+
+    private static final String ALLOWED_ORIGIN = "http://localhost:5173";
 
     @Autowired
     private MockMvc mockMvc;
@@ -72,6 +76,25 @@ class SecurityAuthorizationTest {
     void rejectsUnauthenticatedIncidentRequest() throws Exception {
         mockMvc.perform(get("/api/incidents"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void allowsCorsPreflightFromConfiguredFrontend() throws Exception {
+        mockMvc.perform(options("/api/incidents")
+                        .header("Origin", ALLOWED_ORIGIN)
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "authorization,content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", ALLOWED_ORIGIN));
+    }
+
+    @Test
+    void rejectsCorsPreflightFromUnconfiguredOrigin() throws Exception {
+        mockMvc.perform(options("/api/incidents")
+                        .header("Origin", "https://untrusted.example")
+                        .header("Access-Control-Request-Method", "POST"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
     @Test
