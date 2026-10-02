@@ -168,7 +168,7 @@ Requisitos: Docker Engine o Docker Desktop con Compose v2.
 1. Cree su archivo local de configuración:
 
    ```powershell
-   Copy-Item .env.example .env
+   Copy-Item .env
    ```
 
 2. Reemplace los placeholders de `POSTGRES_PASSWORD` y `JWT_SECRET`. Para una instalación completamente nueva, complete también las dos variables opcionales del bootstrap.
@@ -264,7 +264,7 @@ $env:SPRING_PROFILES_ACTIVE = "prod"
 | `FLYWAY_BASELINE_ON_MIGRATE` | No | `false` por defecto; solo para incorporar conscientemente un esquema preexistente. |
 | `SPRING_PROFILES_ACTIVE` | Sí en producción | `dev` o `prod`; Compose usa `dev` y Vercel usa `prod`. |
 
-No confirme `.env`, tokens, contraseñas ni secretos. El repositorio solo conserva `.env.example` con placeholders.
+No confirme `.env`, tokens, contraseñas ni secretos. El repositorio solo conserva `.env` con placeholders.
 
 ## Flyway y esquemas existentes
 
