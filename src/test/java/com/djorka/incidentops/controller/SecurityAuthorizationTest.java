@@ -88,6 +88,15 @@ class SecurityAuthorizationTest {
     }
 
     @Test
+    void healthEndpointDoesNotExistAndIsNotPublic() throws Exception {
+        mockMvc.perform(get("/api/health"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(get("/api/health").with(role("VIEWER")))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void landingResourceIsPublicAndContainsOnlyTheServiceIndicator() throws Exception {
         mockMvc.perform(get("/index.html"))
                 .andExpect(status().isOk())
