@@ -22,8 +22,8 @@ Producción: [https://incidentops.vercel.app](https://incidentops.vercel.app), e
 - PostgreSQL 18.6, Flyway y validación del modelo Hibernate.
 - Imagen multi-stage y ejecución no privilegiada en Docker.
 - Landing pública mínima sin información operativa sensible.
-- CORS restringido al origen configurado mediante `FRONTEND_URL`.
-- Suite automatizada de 70 pruebas.
+- CORS restringido a los orígenes exactos configurados mediante `FRONTEND_URLS`.
+- Suite automatizada de 74 pruebas.
 
 ## Stack
 
@@ -137,7 +137,7 @@ Authorization: Bearer <JWT>
 
 `GET /` ofrece una landing pública mínima que indica que IncidentOps API está activa. `/api/auth/register` y `/api/auth/login` también son públicos; el resto de la API conserva sus reglas de seguridad y su comportamiento normal. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
 
-CORS permite un único origen exacto configurado mediante `FRONTEND_URL`; no utiliza wildcard. Esta política controla el acceso desde navegadores, mientras Spring Security continúa aplicando autenticación y roles a todos los recursos protegidos.
+CORS permite una lista de orígenes exactos configurada mediante `FRONTEND_URLS`, separados por coma. Los espacios y valores vacíos se ignoran. No se utiliza wildcard: cada frontend autorizado debe declararse explícitamente. Si `FRONTEND_URLS` no está definida, se conserva compatibilidad usando `FRONTEND_URL`; localmente, el último fallback es `http://localhost:5173`. Esta política controla el acceso desde navegadores, mientras Spring Security continúa aplicando autenticación y roles a todos los recursos protegidos.
 
 ## Bootstrap administrativo opcional
 
@@ -221,10 +221,16 @@ SPRING_DATASOURCE_URL
 SPRING_DATASOURCE_USERNAME
 SPRING_DATASOURCE_PASSWORD
 JWT_SECRET
-FRONTEND_URL
+FRONTEND_URLS
 ```
 
-`FRONTEND_URL` debe contener el origen público exacto del frontend, sin wildcard. `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` no son permanentes: solo se usan juntas para inicializar una base vacía y después se retiran.
+`FRONTEND_URLS` debe contener los orígenes exactos autorizados, separados por coma. Por ejemplo:
+
+```dotenv
+FRONTEND_URLS=http://localhost:5173,https://frontend-production.example
+```
+
+No use `*` en producción. Durante la transición, si `FRONTEND_URLS` no está definida, la aplicación usa el valor existente de `FRONTEND_URL`. `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` no son permanentes: solo se usan juntas para inicializar una base vacía y después se retiran.
 
 ## Ejecución local sin Docker para el backend
 
@@ -236,7 +242,7 @@ $env:SPRING_DATASOURCE_URL = "jdbc:postgresql://localhost:5432/incidentops"
 $env:SPRING_DATASOURCE_USERNAME = "<database-user>"
 $env:SPRING_DATASOURCE_PASSWORD = "<database-password>"
 $env:JWT_SECRET = "<base64-encoded-256-bit-secret>"
-$env:FRONTEND_URL = "http://localhost:5173"
+$env:FRONTEND_URLS = "http://localhost:5173,https://frontend-production.example"
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -257,7 +263,8 @@ $env:SPRING_PROFILES_ACTIVE = "prod"
 | `SPRING_DATASOURCE_USERNAME` | Sí fuera de Compose | Usuario JDBC. |
 | `SPRING_DATASOURCE_PASSWORD` | Sí fuera de Compose | Contraseña JDBC. |
 | `JWT_SECRET` | Sí | Secreto Base64 con al menos 256 bits decodificados. |
-| `FRONTEND_URL` | Sí en producción | Origen exacto autorizado por CORS; localmente usa `http://localhost:5173` por defecto. |
+| `FRONTEND_URLS` | Sí en producción | Orígenes exactos autorizados por CORS, separados por coma; no admite wildcard. |
+| `FRONTEND_URL` | Fallback de compatibilidad | Origen único usado solo cuando `FRONTEND_URLS` no está definida; localmente usa `http://localhost:5173` por defecto. |
 | `PORT` | Administrada | Puerto HTTP asignado por Vercel; localmente usa `8080` por defecto. |
 | `BOOTSTRAP_ADMIN_EMAIL` | Temporal | Correo del primer ADMIN; vacío desactiva el bootstrap. |
 | `BOOTSTRAP_ADMIN_PASSWORD` | Temporal | Contraseña del primer ADMIN; debe retirarse después de inicializar una base vacía. |
@@ -447,7 +454,7 @@ src/test/java/com/djorka/incidentops/
 - Bootstrap inicial opt-in, idempotente y sin credenciales hardcodeadas.
 - Contenedor runtime sin Maven y ejecutado con usuario no root.
 - `Dockerfile.vercel` separado del stack local y PostgreSQL persistente alojado externamente en Neon.
-- Puerto HTTP dinámico mediante `PORT` y CORS limitado a `FRONTEND_URL`.
+- Puerto HTTP dinámico mediante `PORT` y CORS limitado a la lista exacta de `FRONTEND_URLS`.
 
 ## Limitaciones conocidas y próximos pasos
 

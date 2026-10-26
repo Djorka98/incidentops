@@ -1,5 +1,6 @@
 package com.djorka.incidentops.config;
 
+import java.util.Arrays;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -107,10 +108,19 @@ public class SecurityConfig {
 
         @Bean
         public CorsConfigurationSource corsConfigurationSource(
-                        @Value("${app.cors.allowed-origin}") String allowedOrigin) {
+                        @Value("${app.cors.allowed-origins}") String allowedOrigins) {
+
+                List<String> origins = Arrays.stream(allowedOrigins.split(","))
+                                .map(String::trim)
+                                .filter(origin -> !origin.isEmpty())
+                                .toList();
+
+                if (origins.contains("*")) {
+                        throw new IllegalArgumentException("Wildcard CORS origins are not allowed");
+                }
 
                 CorsConfiguration configuration = new CorsConfiguration();
-                configuration.setAllowedOrigins(List.of(allowedOrigin));
+                configuration.setAllowedOrigins(origins);
                 configuration.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
                 configuration.setAllowedHeaders(List.of("Authorization", "Content-Type"));
                 configuration.setAllowCredentials(false);

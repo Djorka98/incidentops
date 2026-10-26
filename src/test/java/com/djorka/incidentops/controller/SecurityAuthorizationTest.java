@@ -25,6 +25,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDateTime;
@@ -54,9 +55,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 @Import(SecurityConfig.class)
 @ImportAutoConfiguration({SecurityAutoConfiguration.class, ServletWebSecurityAutoConfiguration.class})
+@TestPropertySource(properties = "app.cors.allowed-origins=http://localhost:5173, https://frontend-production.example, ")
 class SecurityAuthorizationTest {
 
     private static final String ALLOWED_ORIGIN = "http://localhost:5173";
+    private static final String SECOND_ALLOWED_ORIGIN = "https://frontend-production.example";
 
     @Autowired
     private MockMvc mockMvc;
@@ -118,6 +121,29 @@ class SecurityAuthorizationTest {
                         .header("Access-Control-Request-Headers", "authorization,content-type"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", ALLOWED_ORIGIN));
+    }
+
+    @Test
+    void allowsCorsPreflightFromSecondConfiguredFrontend() throws Exception {
+        mockMvc.perform(options("/api/incidents")
+                        .header("Origin", SECOND_ALLOWED_ORIGIN)
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "authorization,content-type"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", SECOND_ALLOWED_ORIGIN));
+    }
+
+    @Test
+    void allowsCorsPreflightForPublicAuthenticationEndpoints() throws Exception {
+        for (String endpoint : List.of("/api/auth/login", "/api/auth/register")) {
+            mockMvc.perform(options(endpoint)
+                            .header("Origin", ALLOWED_ORIGIN)
+                            .header("Access-Control-Request-Method", "POST")
+                            .header("Access-Control-Request-Headers", "content-type"))
+                    .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", ALLOWED_ORIGIN))
+                    .andExpect(header().string("Access-Control-Allow-Methods", org.hamcrest.Matchers.containsString("POST")));
+        }
     }
 
     @Test
