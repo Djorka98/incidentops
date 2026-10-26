@@ -23,7 +23,7 @@ Producción: [https://incidentops.vercel.app](https://incidentops.vercel.app), e
 - Imagen multi-stage y ejecución no privilegiada en Docker.
 - Landing pública mínima sin información operativa sensible.
 - CORS restringido a los orígenes exactos configurados mediante `FRONTEND_URLS`.
-- Suite automatizada de 74 pruebas.
+- Suite automatizada de pruebas unitarias y de integración.
 
 ## Stack
 
@@ -246,7 +246,7 @@ $env:FRONTEND_URLS = "http://localhost:5173,https://frontend-production.example"
 .\mvnw.cmd spring-boot:run
 ```
 
-El perfil `dev` habilita Swagger y SQL de diagnóstico. El perfil `prod` deshabilita Swagger, `/v3/api-docs` y el log SQL:
+El perfil `dev` habilita Swagger y SQL de diagnóstico. El perfil `prod` deshabilita Swagger, `/v3/api-docs` y el log SQL. También inicializa beans y repositorios bajo demanda, limita Hikari a cuatro conexiones sin un mínimo de conexiones idle y mantiene Flyway como validación/migración eager del esquema:
 
 ```powershell
 $env:SPRING_PROFILES_ACTIVE = "prod"
@@ -275,7 +275,7 @@ No confirme `.env`, tokens, contraseñas ni secretos. El repositorio solo conser
 
 ## Flyway y esquemas existentes
 
-En una base vacía, Flyway ejecuta `V1__baseline_schema.sql` y crea `users`, `incidents`, `comments` e `incident_history`. Hibernate usa `ddl-auto=validate`: valida el resultado, pero no lo altera.
+En una base vacía, Flyway ejecuta `V1__baseline_schema.sql` y crea `users`, `incidents`, `comments` e `incident_history`. En producción Hibernate usa `ddl-auto=none`: Flyway es la autoridad del esquema y evita una segunda validación remota durante cada cold start. `FlywayMigrationIntegrationTest` conserva `ddl-auto=validate` de forma explícita para comprobar que la migración produce un esquema compatible con las entidades.
 
 En una base preexistente que coincide exactamente con V1, el primer baseline es una operación administrativa explícita:
 
@@ -400,7 +400,7 @@ Ejecute toda la suite:
 .\mvnw.cmd clean test
 ```
 
-Estado verificado: **70 tests, 0 failures, 0 errors, 0 skipped**.
+La suite completa debe terminar sin failures, errors ni tests omitidos antes de empaquetar.
 
 La cobertura funcional incluye:
 
@@ -449,7 +449,7 @@ src/test/java/com/djorka/incidentops/
 - `EntityGraph` y DTO mapping transaccional con Open Session in View desactivado.
 - Filtros combinables mediante JPA Specifications.
 - Métricas calculadas en base de datos en una sola consulta agregada.
-- Flyway como propietario del esquema y Hibernate limitado a validar.
+- Flyway como propietario del esquema en producción; la compatibilidad con las entidades se valida mediante una prueba de integración dedicada.
 - Perfiles para separar observabilidad de desarrollo y exposición de Swagger.
 - Bootstrap inicial opt-in, idempotente y sin credenciales hardcodeadas.
 - Contenedor runtime sin Maven y ejecutado con usuario no root.
@@ -478,7 +478,7 @@ Para una demostración breve:
 3. Inicie sesión como ADMIN desde Swagger en el perfil `dev`.
 4. Registre un VIEWER y muestre la diferencia de permisos.
 5. Cree un incidente, avance su estado, cambie severidad y agregue un comentario.
-6. Consulte historial, métricas, Flyway V1 y la suite verde de 69 pruebas.
+6. Consulte historial, métricas, Flyway V1 y la suite automatizada completa.
 
 ## Licencia
 

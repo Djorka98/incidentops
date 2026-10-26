@@ -3,6 +3,7 @@ package com.djorka.incidentops.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
@@ -19,6 +20,7 @@ public class JwtConfig {
     private static final int MINIMUM_HS256_KEY_BYTES = 32;
 
     @Bean
+    @Lazy(false)
     public SecretKey jwtSecretKey(
             @Value("${app.jwt.secret}") String secret
     ) {

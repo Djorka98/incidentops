@@ -12,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -100,6 +101,9 @@ class AdminBootstrapTest {
     }
 
     private AdminBootstrap bootstrap(String email, String password) {
-        return new AdminBootstrap(userRepository, passwordEncoder, email, password);
+        AdminBootstrapService bootstrapService = new AdminBootstrapService(userRepository, passwordEncoder);
+        StaticListableBeanFactory beanFactory = new StaticListableBeanFactory();
+        beanFactory.addBean("adminBootstrapService", bootstrapService);
+        return new AdminBootstrap(beanFactory.getBeanProvider(AdminBootstrapService.class), email, password);
     }
 }
