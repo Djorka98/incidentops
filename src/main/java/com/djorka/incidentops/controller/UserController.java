@@ -10,6 +10,10 @@ import lombok.RequiredArgsConstructor;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationCredentialsNotFoundException;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -49,5 +53,19 @@ public class UserController {
         return ResponseEntity.ok(
                 userService.patchUser(id, request)
         );
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteUser(
+            @PathVariable @Positive Long id,
+            @AuthenticationPrincipal Jwt jwt) {
+        Number currentUserId = jwt.getClaim("userId");
+        if (currentUserId == null) {
+            throw new AuthenticationCredentialsNotFoundException(
+                    "Authenticated user identity is unavailable");
+        }
+
+        userService.deleteUser(id, currentUserId.longValue());
+        return ResponseEntity.noContent().build();
     }
 }

@@ -6,7 +6,11 @@ import com.djorka.incidentops.exception.ResourceConflictException;
 import com.djorka.incidentops.exception.ResourceNotFoundException;
 import com.djorka.incidentops.model.User;
 import com.djorka.incidentops.repository.UserRepository;
+import com.djorka.incidentops.repository.CommentRepository;
+import com.djorka.incidentops.repository.IncidentHistoryRepository;
+import com.djorka.incidentops.repository.IncidentRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,6 +21,9 @@ import java.util.List;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final IncidentRepository incidentRepository;
+    private final CommentRepository commentRepository;
+    private final IncidentHistoryRepository incidentHistoryRepository;
 
     public List<UserResponse> getAllUsers() {
         return userRepository.findAll()
@@ -69,5 +76,32 @@ public class UserService {
         User savedUser = userRepository.save(user);
 
         return toResponse(savedUser);
+    }
+
+    @Transactional
+    public void deleteUser(Long id, Long currentUserId) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "User not found with id:" + id));
+
+        if (user.getId().equals(currentUserId)) {
+            throw new ResourceConflictException("Current user cannot be deleted");
+        }
+
+        boolean referenced = incidentRepository.existsByAssignedToId(id)
+                || commentRepository.existsByAuthorId(id)
+                || incidentHistoryRepository.existsByPerformedById(id);
+        if (referenced) {
+            throw new ResourceConflictException(
+                    "User cannot be deleted because it is referenced by operational data");
+        }
+
+        try {
+            userRepository.delete(user);
+            userRepository.flush();
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResourceConflictException(
+                    "User cannot be deleted because it is referenced by operational data");
+        }
     }
 }

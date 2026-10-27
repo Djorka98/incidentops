@@ -9,6 +9,8 @@ import java.util.List;
 public interface IncidentHistoryRepository
         extends JpaRepository<IncidentHistory, Long> {
 
+    boolean existsByPerformedById(Long userId);
+
     @EntityGraph(attributePaths = {"incident", "performedBy"})
     List<IncidentHistory> findByIncidentIdOrderByCreatedAtAsc(Long incidentId);
 }

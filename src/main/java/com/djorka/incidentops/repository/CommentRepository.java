@@ -8,6 +8,8 @@ import java.util.List;
 
 public interface CommentRepository extends JpaRepository<Comment, Long> {
 
+    boolean existsByAuthorId(Long userId);
+
     @EntityGraph(attributePaths = {"author", "incident"})
     List<Comment> findByIncidentIdOrderByCreatedAtAsc(Long incidentId);
 }

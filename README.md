@@ -133,7 +133,7 @@ Authorization: Bearer <JWT>
 | Agregar comentarios | Sí | Sí | No |
 | Eliminar incidentes | Sí | No | No |
 | Listar usuarios | Sí | Sí | No |
-| Crear o modificar usuarios | Sí | No | No |
+| Crear, modificar o eliminar usuarios | Sí | No | No |
 
 `GET /` ofrece una landing pública mínima que indica que IncidentOps API está activa. `/api/auth/register` y `/api/auth/login` también son públicos; el resto de la API conserva sus reglas de seguridad y su comportamiento normal. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
 
@@ -317,8 +317,11 @@ En `prod` ambos recursos están deshabilitados.
 | `GET` | `/api/users` | Lista usuarios | ADMIN, RESPONDER |
 | `POST` | `/api/users` | Crea un registro de usuario | ADMIN |
 | `PATCH` | `/api/users/{id}` | Actualiza nombre, correo y rol | ADMIN |
+| `DELETE` | `/api/users/{id}` | Elimina un usuario sin referencias operativas | ADMIN |
 
 La búsqueda de incidentes acepta `status`, `severity`, `assigneeId`, `search`, `page`, `size` y `sort`. El tamaño máximo de página es 100 y las propiedades de orden permitidas son `id`, `title`, `status`, `severity`, `createdAt`, `updatedAt` y `resolvedAt`.
+
+La eliminación de usuarios rechaza con `409 Conflict` tanto el intento de un ADMIN de eliminar su propia cuenta como cualquier usuario referenciado como responsable de incidente, autor de comentario o actor del historial. No se eliminan ni modifican en cascada incidentes, comentarios o registros históricos.
 
 ### Ejemplos
 
@@ -389,7 +392,7 @@ Códigos principales:
 - `401 Unauthorized`: autenticación ausente o inválida.
 - `403 Forbidden`: el rol no permite la operación.
 - `404 Not Found`: recurso inexistente.
-- `409 Conflict`: correo duplicado o restricción de integridad.
+- `409 Conflict`: correo duplicado, intento de eliminar al usuario actual o usuario referenciado por datos operativos.
 - `500 Internal Server Error`: error inesperado sin filtrar detalles internos.
 
 ## Testing

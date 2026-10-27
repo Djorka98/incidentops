@@ -34,6 +34,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
@@ -227,6 +228,60 @@ class SecurityAuthorizationTest {
     }
 
     @Test
+    void onlyAdminCanDeleteUsers() throws Exception {
+        mockMvc.perform(delete("/api/users/2").with(role("ADMIN", 1L)))
+                .andExpect(status().isNoContent());
+        verify(userService).deleteUser(2L, 1L);
+
+        mockMvc.perform(delete("/api/users/2").with(role("RESPONDER", 3L)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/users/2").with(role("VIEWER", 4L)))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/users/2"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void rejectsInvalidUserIdBeforeDelete() throws Exception {
+        mockMvc.perform(delete("/api/users/0").with(role("ADMIN", 1L)))
+                .andExpect(status().isBadRequest());
+
+        verify(userService, never()).deleteUser(any(), any());
+    }
+
+    @Test
+    void mapsUnknownUserDeleteToNotFound() throws Exception {
+        doThrow(new ResourceNotFoundException("User not found with id:404"))
+                .when(userService).deleteUser(404L, 1L);
+
+        mockMvc.perform(delete("/api/users/404").with(role("ADMIN", 1L)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.message").value("User not found with id:404"));
+    }
+
+    @Test
+    void mapsSelfDeleteToConflict() throws Exception {
+        doThrow(new ResourceConflictException("Current user cannot be deleted"))
+                .when(userService).deleteUser(1L, 1L);
+
+        mockMvc.perform(delete("/api/users/1").with(role("ADMIN", 1L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("Current user cannot be deleted"));
+    }
+
+    @Test
+    void mapsReferencedUserDeleteToConflict() throws Exception {
+        doThrow(new ResourceConflictException(
+                "User cannot be deleted because it is referenced by operational data"))
+                .when(userService).deleteUser(2L, 1L);
+
+        mockMvc.perform(delete("/api/users/2").with(role("ADMIN", 1L)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(
+                        "User cannot be deleted because it is referenced by operational data"));
+    }
+
+    @Test
     void authenticationEndpointsArePublic() throws Exception {
         when(authService.register(any())).thenReturn(new AuthResponse("token"));
 
@@ -326,7 +381,13 @@ class SecurityAuthorizationTest {
     }
 
     private org.springframework.test.web.servlet.request.RequestPostProcessor role(String role) {
-        return jwt().authorities(new SimpleGrantedAuthority("ROLE_" + role));
+        return role(role, 7L);
+    }
+
+    private org.springframework.test.web.servlet.request.RequestPostProcessor role(String role, Long userId) {
+        return jwt()
+                .jwt(builder -> builder.claim("userId", userId))
+                .authorities(new SimpleGrantedAuthority("ROLE_" + role));
     }
 
     private String validIncidentJson() {

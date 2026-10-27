@@ -7,12 +7,16 @@ import com.djorka.incidentops.exception.ResourceConflictException;
 import com.djorka.incidentops.model.User;
 import com.djorka.incidentops.model.UserRole;
 import com.djorka.incidentops.repository.UserRepository;
+import com.djorka.incidentops.repository.CommentRepository;
+import com.djorka.incidentops.repository.IncidentHistoryRepository;
+import com.djorka.incidentops.repository.IncidentRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,6 +34,12 @@ class UserServiceTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private IncidentRepository incidentRepository;
+    @Mock
+    private CommentRepository commentRepository;
+    @Mock
+    private IncidentHistoryRepository incidentHistoryRepository;
     @InjectMocks
     private UserService userService;
 
@@ -112,6 +123,95 @@ class UserServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessage("User not found with id:404");
         verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void deletesUnreferencedUser() {
+        User target = user(2L, "Viewer", "viewer@example.com", UserRole.VIEWER);
+        when(userRepository.findById(2L)).thenReturn(Optional.of(target));
+
+        userService.deleteUser(2L, 1L);
+
+        verify(incidentRepository).existsByAssignedToId(2L);
+        verify(commentRepository).existsByAuthorId(2L);
+        verify(incidentHistoryRepository).existsByPerformedById(2L);
+        verify(userRepository).delete(target);
+        verify(userRepository).flush();
+    }
+
+    @Test
+    void rejectsDeleteForUnknownUser() {
+        when(userRepository.findById(404L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.deleteUser(404L, 1L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("User not found with id:404");
+
+        verify(userRepository, never()).delete(any());
+    }
+
+    @Test
+    void rejectsDeletingCurrentUser() {
+        User current = user(1L, "Admin", "admin@example.com", UserRole.ADMIN);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(current));
+
+        assertThatThrownBy(() -> userService.deleteUser(1L, 1L))
+                .isInstanceOf(ResourceConflictException.class)
+                .hasMessage("Current user cannot be deleted");
+
+        verify(incidentRepository, never()).existsByAssignedToId(any());
+        verify(userRepository, never()).delete(any());
+    }
+
+    @Test
+    void rejectsDeletingAssignedUser() {
+        assertReferencedUserCannotBeDeleted();
+        when(incidentRepository.existsByAssignedToId(2L)).thenReturn(true);
+
+        assertOperationalReferenceConflict();
+    }
+
+    @Test
+    void rejectsDeletingCommentAuthor() {
+        assertReferencedUserCannotBeDeleted();
+        when(commentRepository.existsByAuthorId(2L)).thenReturn(true);
+
+        assertOperationalReferenceConflict();
+    }
+
+    @Test
+    void rejectsDeletingHistoryActor() {
+        assertReferencedUserCannotBeDeleted();
+        when(incidentHistoryRepository.existsByPerformedById(2L)).thenReturn(true);
+
+        assertOperationalReferenceConflict();
+    }
+
+    @Test
+    void translatesLateForeignKeyConflict() {
+        User target = user(2L, "Viewer", "viewer@example.com", UserRole.VIEWER);
+        when(userRepository.findById(2L)).thenReturn(Optional.of(target));
+        doThrow(new DataIntegrityViolationException("foreign key detail"))
+                .when(userRepository).flush();
+
+        assertThatThrownBy(() -> userService.deleteUser(2L, 1L))
+                .isInstanceOf(ResourceConflictException.class)
+                .hasMessage("User cannot be deleted because it is referenced by operational data");
+
+        verify(userRepository).delete(target);
+    }
+
+    private void assertReferencedUserCannotBeDeleted() {
+        User target = user(2L, "Operator", "operator@example.com", UserRole.RESPONDER);
+        when(userRepository.findById(2L)).thenReturn(Optional.of(target));
+    }
+
+    private void assertOperationalReferenceConflict() {
+        assertThatThrownBy(() -> userService.deleteUser(2L, 1L))
+                .isInstanceOf(ResourceConflictException.class)
+                .hasMessage("User cannot be deleted because it is referenced by operational data");
+
+        verify(userRepository, never()).delete(any());
     }
 
     private User user(Long id, String name, String email, UserRole role) {

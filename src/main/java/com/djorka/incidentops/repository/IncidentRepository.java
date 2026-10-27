@@ -14,6 +14,8 @@ public interface IncidentRepository
                 extends JpaRepository<Incident, Long>,
                 JpaSpecificationExecutor<Incident> {
 
+        boolean existsByAssignedToId(Long userId);
+
         @Override
         @EntityGraph(attributePaths = "assignedTo")
         Page<Incident> findAll(Specification<Incident> specification, Pageable pageable);

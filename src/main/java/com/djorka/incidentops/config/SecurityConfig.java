@@ -94,6 +94,11 @@ public class SecurityConfig {
                                                                 "/api/users/**")
                                                 .hasAnyRole("ADMIN", "RESPONDER")
 
+                                                .requestMatchers(
+                                                                HttpMethod.DELETE,
+                                                                "/api/users/**")
+                                                .hasRole("ADMIN")
+
                                                 .requestMatchers("/api/users/**")
                                                 .hasRole("ADMIN")
 
