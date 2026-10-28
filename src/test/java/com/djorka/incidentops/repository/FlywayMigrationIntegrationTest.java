@@ -30,8 +30,8 @@ class FlywayMigrationIntegrationTest {
     private DataSource dataSource;
 
     @Test
-    void migratesEmptyDatabaseToVersionOneWithExpectedTables() throws Exception {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("1");
+    void migratesEmptyDatabaseToLatestVersionWithExpectedTables() throws Exception {
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("2");
 
         Set<String> tables = new TreeSet<>();
         try (Connection connection = dataSource.getConnection();
@@ -47,6 +47,8 @@ class FlywayMigrationIntegrationTest {
                 "incidents",
                 "comments",
                 "incident_history",
+                "password_reset_tokens",
+                "security_events",
                 "flyway_schema_history"
         );
     }

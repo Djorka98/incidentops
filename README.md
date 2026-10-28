@@ -9,6 +9,7 @@ Producción: [https://incidentops.vercel.app](https://incidentops.vercel.app), e
 ## Funcionalidades
 
 - Registro e inicio de sesión con JWT.
+- Cambio y recuperación segura de contraseña con tokens de un solo uso.
 - Roles `ADMIN`, `RESPONDER` y `VIEWER`.
 - Creación, consulta, búsqueda, filtrado y paginación de incidentes.
 - Flujo de estados controlado: `OPEN` → `INVESTIGATING` → `IDENTIFIED` → `MONITORING` → `RESOLVED`.
@@ -135,7 +136,9 @@ Authorization: Bearer <JWT>
 | Listar usuarios | Sí | Sí | No |
 | Crear, modificar o eliminar usuarios | Sí | No | No |
 
-`GET /` ofrece una landing pública mínima que indica que IncidentOps API está activa. `/api/auth/register` y `/api/auth/login` también son públicos; el resto de la API conserva sus reglas de seguridad y su comportamiento normal. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
+`GET /` ofrece una landing pública mínima que indica que IncidentOps API está activa. `/api/auth/register`, `/api/auth/login`, `/api/auth/forgot-password` y `/api/auth/reset-password` son públicos; el cambio voluntario en `/api/auth/password` requiere JWT. El resto de la API conserva sus reglas de seguridad y su comportamiento normal. El registro público siempre crea un usuario `VIEWER`; no acepta un rol enviado por el cliente. Las contraseñas se almacenan con BCrypt y el secreto JWT se obtiene exclusivamente del entorno.
+
+La recuperación genera 32 bytes aleatorios con `SecureRandom`; el token raw solo se entrega a la abstracción de correo y la base guarda exclusivamente su SHA-256. Los tokens duran 20 minutos, son de un solo uso y el consumo usa bloqueo pesimista. `security_events` conserva auditoría y soporta límites persistentes, sin guardar contraseñas, JWT, cabeceras `Authorization` ni tokens raw.
 
 CORS permite una lista de orígenes exactos configurada mediante `FRONTEND_URLS`, separados por coma. Los espacios y valores vacíos se ignoran. No se utiliza wildcard: cada frontend autorizado debe declararse explícitamente. Si `FRONTEND_URLS` no está definida, se conserva compatibilidad usando `FRONTEND_URL`; localmente, el último fallback es `http://localhost:5173`. Esta política controla el acceso desde navegadores, mientras Spring Security continúa aplicando autenticación y roles a todos los recursos protegidos.
 
@@ -222,6 +225,7 @@ SPRING_DATASOURCE_USERNAME
 SPRING_DATASOURCE_PASSWORD
 JWT_SECRET
 FRONTEND_URLS
+PASSWORD_RESET_FRONTEND_URL
 ```
 
 `FRONTEND_URLS` debe contener los orígenes exactos autorizados, separados por coma. Por ejemplo:
@@ -231,6 +235,8 @@ FRONTEND_URLS=http://localhost:5173,https://frontend-production.example
 ```
 
 No use `*` en producción. Durante la transición, si `FRONTEND_URLS` no está definida, la aplicación usa el valor existente de `FRONTEND_URL`. `BOOTSTRAP_ADMIN_EMAIL` y `BOOTSTRAP_ADMIN_PASSWORD` no son permanentes: solo se usan juntas para inicializar una base vacía y después se retiran.
+
+`PASSWORD_RESET_FRONTEND_URL` es la ruta del frontend que recibirá el token como query parameter. Ejemplo de configuración local: `http://localhost:5173/reset-password`. No existe un proveedor de correo real en el repositorio; la implementación fallback no envía ni registra el token. Producción requiere conectar una implementación de `PasswordResetDeliveryService` y sus credenciales mediante variables externas.
 
 ## Ejecución local sin Docker para el backend
 
@@ -243,6 +249,7 @@ $env:SPRING_DATASOURCE_USERNAME = "<database-user>"
 $env:SPRING_DATASOURCE_PASSWORD = "<database-password>"
 $env:JWT_SECRET = "<base64-encoded-256-bit-secret>"
 $env:FRONTEND_URLS = "http://localhost:5173,https://frontend-production.example"
+$env:PASSWORD_RESET_FRONTEND_URL = "http://localhost:5173/reset-password"
 .\mvnw.cmd spring-boot:run
 ```
 
@@ -263,6 +270,7 @@ $env:SPRING_PROFILES_ACTIVE = "prod"
 | `SPRING_DATASOURCE_USERNAME` | Sí fuera de Compose | Usuario JDBC. |
 | `SPRING_DATASOURCE_PASSWORD` | Sí fuera de Compose | Contraseña JDBC. |
 | `JWT_SECRET` | Sí | Secreto Base64 con al menos 256 bits decodificados. |
+| `PASSWORD_RESET_FRONTEND_URL` | Para delivery | URL del frontend usada para construir `?token=...`; vacía desactiva el intento de delivery. |
 | `FRONTEND_URLS` | Sí en producción | Orígenes exactos autorizados por CORS, separados por coma; no admite wildcard. |
 | `FRONTEND_URL` | Fallback de compatibilidad | Origen único usado solo cuando `FRONTEND_URLS` no está definida; localmente usa `http://localhost:5173` por defecto. |
 | `PORT` | Administrada | Puerto HTTP asignado por Vercel; localmente usa `8080` por defecto. |
@@ -275,7 +283,7 @@ No confirme `.env`, tokens, contraseñas ni secretos. El repositorio solo conser
 
 ## Flyway y esquemas existentes
 
-En una base vacía, Flyway ejecuta `V1__baseline_schema.sql` y crea `users`, `incidents`, `comments` e `incident_history`. En producción Hibernate usa `ddl-auto=none`: Flyway es la autoridad del esquema y evita una segunda validación remota durante cada cold start. `FlywayMigrationIntegrationTest` conserva `ddl-auto=validate` de forma explícita para comprobar que la migración produce un esquema compatible con las entidades.
+En una base vacía, Flyway ejecuta `V1__baseline_schema.sql` y `V2__password_security.sql`. V2 agrega `password_reset_tokens`, `security_events` e índices para lookup y rate limiting. En producción Hibernate usa `ddl-auto=none`: Flyway es la autoridad del esquema y evita una segunda validación remota durante cada cold start. `FlywayMigrationIntegrationTest` conserva `ddl-auto=validate` de forma explícita para comprobar que las migraciones producen un esquema compatible con las entidades.
 
 En una base preexistente que coincide exactamente con V1, el primer baseline es una operación administrativa explícita:
 
@@ -303,6 +311,9 @@ En `prod` ambos recursos están deshabilitados.
 | `GET` | `/` | Landing mínima de disponibilidad | Público |
 | `POST` | `/api/auth/register` | Registra un `VIEWER` y devuelve JWT | Público |
 | `POST` | `/api/auth/login` | Autentica y devuelve JWT | Público |
+| `PATCH` | `/api/auth/password` | Cambia voluntariamente la contraseña | Autenticado |
+| `POST` | `/api/auth/forgot-password` | Solicita recuperación con respuesta genérica | Público |
+| `POST` | `/api/auth/reset-password` | Consume un token y cambia la contraseña | Público |
 | `GET` | `/api/incidents` | Busca, filtra, ordena y pagina | Todos los roles |
 | `POST` | `/api/incidents` | Crea un incidente `OPEN` | ADMIN, RESPONDER |
 | `GET` | `/api/incidents/{id}` | Obtiene un incidente | Todos los roles |
@@ -322,6 +333,14 @@ En `prod` ambos recursos están deshabilitados.
 La búsqueda de incidentes acepta `status`, `severity`, `assigneeId`, `search`, `page`, `size` y `sort`. El tamaño máximo de página es 100 y las propiedades de orden permitidas son `id`, `title`, `status`, `severity`, `createdAt`, `updatedAt` y `resolvedAt`.
 
 La eliminación de usuarios rechaza con `409 Conflict` tanto el intento de un ADMIN de eliminar su propia cuenta como cualquier usuario referenciado como responsable de incidente, autor de comentario o actor del historial. No se eliminan ni modifican en cascada incidentes, comentarios o registros históricos.
+
+Políticas de contraseña y recuperación:
+
+- Contraseñas nuevas: entre 8 y 100 caracteres, sin requisitos arbitrarios adicionales.
+- Cambio voluntario: mínimo 10 minutos entre éxitos y máximo 3 éxitos en 24 horas; excederlo devuelve `429`.
+- Forgot por email normalizado: máximo 3 aceptadas por hora y 5 en 24 horas.
+- Forgot por IP: máximo 10 aceptadas por hora cuando existe una IP confiable.
+- Forgot siempre devuelve el mismo `202`, incluso para cuentas inexistentes o límites alcanzados; al superar un límite no se crea token ni se intenta delivery.
 
 ### Ejemplos
 
@@ -393,6 +412,7 @@ Códigos principales:
 - `403 Forbidden`: el rol no permite la operación.
 - `404 Not Found`: recurso inexistente.
 - `409 Conflict`: correo duplicado, intento de eliminar al usuario actual o usuario referenciado por datos operativos.
+- `429 Too Many Requests`: límite de cambios voluntarios de contraseña alcanzado.
 - `500 Internal Server Error`: error inesperado sin filtrar detalles internos.
 
 ## Testing
@@ -411,7 +431,7 @@ La cobertura funcional incluye:
 - transiciones válidas e inválidas, filtros, búsqueda, paginación y métricas;
 - autorización por método y rol mediante MockMvc;
 - transacciones e historial integrado;
-- migración Flyway V1 y búsquedas JPA sobre H2;
+- migraciones Flyway V1/V2, recuperación concurrente y búsquedas JPA sobre H2;
 - configuración criptográfica JWT;
 - bootstrap ADMIN, omisiones, BCrypt e idempotencia;
 - CORS, landing pública y conservación de los límites de autorización.
@@ -431,6 +451,7 @@ src/main/java/com/djorka/incidentops/
 
 src/main/resources/
 ├── db/migration/V1__baseline_schema.sql
+├── db/migration/V2__password_security.sql
 ├── static/index.html
 ├── application.properties
 ├── application-dev.properties
@@ -464,8 +485,9 @@ src/test/java/com/djorka/incidentops/
 - `POST /api/users` crea un registro administrativo sin contraseña; una cuenta autenticable debe originarse mediante registro público y luego ser promovida por un ADMIN. Este contrato podría rediseñarse en una versión futura.
 - Los comentarios, el historial y la lista de usuarios aún no están paginados.
 - La representación JSON de `Page` depende actualmente del contrato de Spring Data; conviene estabilizarla con un DTO de página propio.
-- No existe refresh token, revocación de tokens ni recuperación de contraseña.
-- No hay rate limiting ni integración con un proveedor externo de identidad.
+- No existe refresh token ni revocación inmediata de JWT. Un JWT emitido antes de cambiar o recuperar la contraseña sigue válido hasta su expiración natural.
+- El rate limiting persistente cubre los flujos de contraseña. No existe todavía rate limiting general para login ni para el resto de la API.
+- El repositorio incluye la abstracción `PasswordResetDeliveryService`, pero no un proveedor real de email ni credenciales; ese adaptador es un paso externo pendiente.
 - El historial y los comentarios impiden borrar ciertos incidentes mediante sus claves foráneas; la API devuelve conflicto en lugar de perder trazabilidad.
 - El build con Java 25 muestra avisos de compatibilidad futura de Lombok y de carga dinámica del agente Mockito. No son fallos actuales, pero deben revisarse al actualizar el JDK o las dependencias.
 - Las imágenes de demostración pueden añadirse en `docs/images/` sin mezclar artefactos binarios con el código fuente.

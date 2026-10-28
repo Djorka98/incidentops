@@ -6,12 +6,15 @@ import com.djorka.incidentops.dto.IncidentMetricsResponse;
 import com.djorka.incidentops.dto.IncidentResponse;
 import com.djorka.incidentops.exception.ResourceNotFoundException;
 import com.djorka.incidentops.exception.ResourceConflictException;
+import com.djorka.incidentops.exception.PasswordOperationException;
+import com.djorka.incidentops.exception.RateLimitExceededException;
 import com.djorka.incidentops.model.IncidentSeverity;
 import com.djorka.incidentops.model.IncidentStatus;
 import com.djorka.incidentops.service.AuthService;
 import com.djorka.incidentops.service.CommentService;
 import com.djorka.incidentops.service.IncidentHistoryService;
 import com.djorka.incidentops.service.IncidentService;
+import com.djorka.incidentops.service.PasswordManagementService;
 import com.djorka.incidentops.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +36,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
@@ -41,6 +45,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -71,6 +76,8 @@ class SecurityAuthorizationTest {
     private UserService userService;
     @MockitoBean
     private AuthService authService;
+    @MockitoBean
+    private PasswordManagementService passwordManagementService;
     @MockitoBean
     private CommentService commentService;
     @MockitoBean
@@ -319,6 +326,99 @@ class SecurityAuthorizationTest {
                                 """))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.message").value("Authentication failed."));
+    }
+
+    @Test
+    void authenticatedUserCanChangePasswordButAnonymousCannot() throws Exception {
+        String body = """
+                {"currentPassword":"secret123","newPassword":"newSecret123"}
+                """;
+
+        mockMvc.perform(patch("/api/auth/password")
+                        .with(role("VIEWER", 7L))
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(patch("/api/auth/password")
+                        .contentType("application/json")
+                        .content(body))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void mapsPasswordChangeValidationAndRateLimit() throws Exception {
+        doThrow(new PasswordOperationException("Current password is invalid"))
+                .when(passwordManagementService).changePassword(eq(7L), any());
+        mockMvc.perform(patch("/api/auth/password")
+                        .with(role("VIEWER", 7L))
+                        .contentType("application/json")
+                        .content("""
+                                {"currentPassword":"wrong123","newPassword":"newSecret123"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Current password is invalid"));
+
+        doThrow(new RateLimitExceededException("Password change rate limit exceeded"))
+                .when(passwordManagementService).changePassword(eq(8L), any());
+        mockMvc.perform(patch("/api/auth/password")
+                        .with(role("VIEWER", 8L))
+                        .contentType("application/json")
+                        .content("""
+                                {"currentPassword":"secret123","newPassword":"newSecret123"}
+                                """))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void forgotPasswordResponsesAreIndistinguishable() throws Exception {
+        String existing = mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"existing@example.com"}
+                                """))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+        String missing = mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"missing@example.com"}
+                                """))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(existing).isEqualTo(missing)
+                .contains("If an account is associated with this email");
+    }
+
+    @Test
+    void forgotPasswordRejectsInvalidEmailSyntax() throws Exception {
+        mockMvc.perform(post("/api/auth/forgot-password")
+                        .contentType("application/json")
+                        .content("""
+                                {"email":"not-an-email"}
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void resetPasswordIsPublicAndMapsInvalidTokenToBadRequest() throws Exception {
+        mockMvc.perform(post("/api/auth/reset-password")
+                        .contentType("application/json")
+                        .content("""
+                                {"token":"valid-token","newPassword":"newSecret123"}
+                                """))
+                .andExpect(status().isNoContent());
+
+        doThrow(new PasswordOperationException("Password reset token is invalid or expired"))
+                .when(passwordManagementService).resetPassword(any(), any());
+        mockMvc.perform(post("/api/auth/reset-password")
+                        .contentType("application/json")
+                        .content("""
+                                {"token":"invalid-token","newPassword":"newSecret123"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message")
+                        .value("Password reset token is invalid or expired"));
     }
 
     @Test

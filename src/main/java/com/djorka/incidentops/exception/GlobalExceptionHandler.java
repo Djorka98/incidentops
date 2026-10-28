@@ -26,6 +26,36 @@ import java.util.Map;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+        @ExceptionHandler(PasswordOperationException.class)
+        public ResponseEntity<Map<String, Object>> handlePasswordOperation(
+                        PasswordOperationException exception,
+                        HttpServletRequest request) {
+
+                Map<String, Object> error = new HashMap<>();
+                error.put("timestamp", LocalDateTime.now());
+                error.put("status", HttpStatus.BAD_REQUEST.value());
+                error.put("error", "Invalid password operation");
+                error.put("message", exception.getMessage());
+                error.put("path", request.getRequestURI());
+
+                return ResponseEntity.badRequest().body(error);
+        }
+
+        @ExceptionHandler(RateLimitExceededException.class)
+        public ResponseEntity<Map<String, Object>> handleRateLimit(
+                        RateLimitExceededException exception,
+                        HttpServletRequest request) {
+
+                Map<String, Object> error = new HashMap<>();
+                error.put("timestamp", LocalDateTime.now());
+                error.put("status", HttpStatus.TOO_MANY_REQUESTS.value());
+                error.put("error", "Too Many Requests");
+                error.put("message", exception.getMessage());
+                error.put("path", request.getRequestURI());
+
+                return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
+        }
+
         @ExceptionHandler(ResourceNotFoundException.class)
         public ResponseEntity<Map<String, Object>> handleNotFound(
                         ResourceNotFoundException exception,
