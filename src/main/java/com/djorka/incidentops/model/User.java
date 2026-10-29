@@ -33,4 +33,16 @@ public class User {
     @Column(nullable = true)
     private String password;
 
+    @Column(name = "preferred_language", nullable = false, length = 2)
+    @Builder.Default
+    private String preferredLanguageCode = PreferredLanguage.ES.code();
+
+    public PreferredLanguage getPreferredLanguage() {
+        return PreferredLanguage.fromCode(preferredLanguageCode);
+    }
+
+    public void setPreferredLanguage(PreferredLanguage language) {
+        preferredLanguageCode = (language == null ? PreferredLanguage.ES : language).code();
+    }
+
 }

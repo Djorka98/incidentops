@@ -45,4 +45,15 @@ public class PasswordResetToken {
 
     @Column(name = "used_at")
     private Instant usedAt;
+
+    @Column(name = "requested_language", length = 2)
+    private String requestedLanguageCode;
+
+    public PreferredLanguage getRequestedLanguage() {
+        return requestedLanguageCode == null ? null : PreferredLanguage.fromCode(requestedLanguageCode);
+    }
+
+    public void setRequestedLanguage(PreferredLanguage language) {
+        requestedLanguageCode = language == null ? null : language.code();
+    }
 }

@@ -317,7 +317,7 @@ class SecurityAuthorizationTest {
 
     @Test
     void mapsAuthenticationFailureToUnauthorizedWithoutLeakingDetails() throws Exception {
-        when(authService.login(any())).thenThrow(new BadCredentialsException("internal detail"));
+        when(authService.login(any(), any())).thenThrow(new BadCredentialsException("internal detail"));
 
         mockMvc.perform(post("/api/auth/login")
                         .contentType("application/json")

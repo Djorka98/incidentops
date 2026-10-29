@@ -31,7 +31,7 @@ class FlywayMigrationIntegrationTest {
 
     @Test
     void migratesEmptyDatabaseToLatestVersionWithExpectedTables() throws Exception {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("2");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("3");
 
         Set<String> tables = new TreeSet<>();
         try (Connection connection = dataSource.getConnection();
@@ -49,7 +49,22 @@ class FlywayMigrationIntegrationTest {
                 "incident_history",
                 "password_reset_tokens",
                 "security_events",
+                "transactional_email_outbox",
+                "email_delivery_audit",
                 "flyway_schema_history"
         );
+
+        try (Connection connection = dataSource.getConnection()) {
+            connection.createStatement().executeUpdate("""
+                    insert into users (name, email, role)
+                    values ('Existing User', 'existing@example.com', 'VIEWER')
+                    """);
+            try (ResultSet result = connection.createStatement().executeQuery("""
+                    select preferred_language from users where email = 'existing@example.com'
+                    """)) {
+                assertThat(result.next()).isTrue();
+                assertThat(result.getString(1)).isEqualTo("es");
+            }
+        }
     }
 }

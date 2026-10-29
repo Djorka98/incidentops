@@ -1,7 +1,10 @@
 package com.djorka.incidentops.config;
 
 import com.djorka.incidentops.service.PasswordResetDeliveryService;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import com.djorka.incidentops.service.EmailDeliveryAuditService;
+import com.djorka.incidentops.service.TransactionalEmailService;
+import com.djorka.incidentops.service.TransactionalEmailTemplateRenderer;
+import com.djorka.incidentops.service.TransactionalPasswordResetDeliveryService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -9,10 +12,11 @@ import org.springframework.context.annotation.Configuration;
 public class PasswordResetDeliveryConfig {
 
     @Bean
-    @ConditionalOnMissingBean(PasswordResetDeliveryService.class)
-    public PasswordResetDeliveryService noOpPasswordResetDeliveryService() {
-        return (email, resetUrl) -> {
-            // Delivery provider intentionally not configured. Never log resetUrl.
-        };
+    public PasswordResetDeliveryService passwordResetDeliveryService(
+            TransactionalEmailService emailService,
+            TransactionalEmailTemplateRenderer templateRenderer,
+            EmailDeliveryAuditService auditService) {
+        return new TransactionalPasswordResetDeliveryService(
+                emailService, templateRenderer, auditService);
     }
 }

@@ -1,6 +1,17 @@
 HELP.md
 .env
 .env.*
+!.env.example
+credentials/
+credentials.*
+secrets/
+.secrets*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
 target/
 .mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/

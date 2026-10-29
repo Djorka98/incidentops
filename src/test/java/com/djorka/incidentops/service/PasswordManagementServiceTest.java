@@ -6,6 +6,7 @@ import com.djorka.incidentops.dto.ResetPasswordRequest;
 import com.djorka.incidentops.exception.PasswordOperationException;
 import com.djorka.incidentops.exception.RateLimitExceededException;
 import com.djorka.incidentops.model.PasswordResetToken;
+import com.djorka.incidentops.model.PreferredLanguage;
 import com.djorka.incidentops.model.SecurityEvent;
 import com.djorka.incidentops.model.SecurityEventType;
 import com.djorka.incidentops.model.User;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -36,6 +38,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class PasswordManagementServiceTest {
@@ -60,6 +63,10 @@ class PasswordManagementServiceTest {
     private PasswordResetDeliveryService deliveryService;
     @Mock
     private ClientIpResolver clientIpResolver;
+    @Spy
+    private PreferredLanguageResolver languageResolver = new PreferredLanguageResolver();
+    @Mock
+    private EmailOutboxService emailOutboxService;
     @Mock
     private Clock applicationClock;
     @InjectMocks
@@ -81,6 +88,15 @@ class PasswordManagementServiceTest {
         httpRequest.setRemoteAddr("203.0.113.10");
         httpRequest.addHeader("User-Agent", "IncidentOps test");
         lenient().when(applicationClock.instant()).thenReturn(NOW);
+        lenient().when(eventRepository.saveAndFlush(any(SecurityEvent.class)))
+                .thenReturn(SecurityEvent.builder().id(15L).build());
+        lenient().when(tokenRepository.saveAndFlush(any(PasswordResetToken.class))).thenAnswer(invocation -> {
+            PasswordResetToken token = invocation.getArgument(0);
+            if (token.getId() == null) {
+                token.setId(11L);
+            }
+            return token;
+        });
     }
 
     @Test
@@ -92,9 +108,12 @@ class PasswordManagementServiceTest {
         assertThat(user.getPassword()).isEqualTo("new-hash");
         verify(tokenRepository).invalidateActiveTokens(7L, NOW);
         ArgumentCaptor<SecurityEvent> event = ArgumentCaptor.forClass(SecurityEvent.class);
-        verify(eventRepository).save(event.capture());
+        verify(eventRepository).saveAndFlush(event.capture());
         assertThat(event.getValue().getEventType()).isEqualTo(SecurityEventType.PASSWORD_CHANGED);
         assertThat(event.getValue().getEmailNormalized()).isEqualTo("user@example.com");
+        verify(emailOutboxService).enqueue(
+                eq(com.djorka.incidentops.model.TransactionalEmailType.PASSWORD_CHANGED),
+                eq(user), eq(PreferredLanguage.ES), any(), eq("password-changed/15"));
     }
 
     @Test
@@ -107,7 +126,7 @@ class PasswordManagementServiceTest {
                 .isInstanceOf(PasswordOperationException.class)
                 .hasMessage("Current password is invalid");
 
-        verify(eventRepository, never()).save(any());
+        verify(eventRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -132,7 +151,7 @@ class PasswordManagementServiceTest {
                 7L, new ChangePasswordRequest("current-password", "new-password")))
                 .isInstanceOf(RateLimitExceededException.class);
 
-        verify(eventRepository, never()).save(any());
+        verify(eventRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -153,7 +172,7 @@ class PasswordManagementServiceTest {
                 7L, new ChangePasswordRequest("current-password", "new-password")))
                 .isInstanceOf(RateLimitExceededException.class);
 
-        verify(eventRepository, times(3)).save(any(SecurityEvent.class));
+        verify(eventRepository, times(3)).saveAndFlush(any(SecurityEvent.class));
     }
 
     @Test
@@ -166,14 +185,45 @@ class PasswordManagementServiceTest {
         service.forgotPassword(new ForgotPasswordRequest(" User@Example.com "), httpRequest);
 
         ArgumentCaptor<PasswordResetToken> token = ArgumentCaptor.forClass(PasswordResetToken.class);
-        verify(tokenRepository).save(token.capture());
+        verify(tokenRepository).saveAndFlush(token.capture());
         assertThat(token.getValue().getTokenHash()).isEqualTo("hashed-token").isNotEqualTo("raw-token");
         assertThat(token.getValue().getCreatedAt()).isEqualTo(NOW);
         assertThat(token.getValue().getExpiresAt())
                 .isEqualTo(NOW.plus(PasswordManagementService.RESET_TOKEN_LIFETIME));
         verify(tokenRepository).invalidateActiveTokens(7L, NOW);
         verify(deliveryService).sendPasswordReset(
-                "User@Example.com", "https://frontend/reset?token=raw-token");
+                eq(user), eq("https://frontend/reset?token=raw-token"),
+                eq(PreferredLanguage.ES), eq(11L));
+    }
+
+    @Test
+    void forgotUsesExplicitLanguageWithoutMutatingUserPreference() {
+        prepareAllowedForgot(Optional.of(user));
+        when(tokenCodec.generateRawToken()).thenReturn("raw-token");
+        when(tokenCodec.hash("raw-token")).thenReturn("hashed-token");
+        when(linkBuilder.build("raw-token")).thenReturn(Optional.empty());
+
+        service.forgotPassword(
+                new ForgotPasswordRequest("user@example.com", PreferredLanguage.EN), httpRequest);
+
+        ArgumentCaptor<PasswordResetToken> token = ArgumentCaptor.forClass(PasswordResetToken.class);
+        verify(tokenRepository).saveAndFlush(token.capture());
+        assertThat(token.getValue().getRequestedLanguage()).isEqualTo(PreferredLanguage.EN);
+        assertThat(user.getPreferredLanguage()).isEqualTo(PreferredLanguage.ES);
+    }
+
+    @Test
+    void forgotRemainsSuccessfulWhenDeliveryFails() {
+        prepareAllowedForgot(Optional.of(user));
+        when(tokenCodec.generateRawToken()).thenReturn("raw-token");
+        when(tokenCodec.hash("raw-token")).thenReturn("hashed-token");
+        when(linkBuilder.build("raw-token")).thenReturn(Optional.of("https://frontend/reset?token=raw-token"));
+        doThrow(new EmailDeliveryException("RESEND_HTTP_500", true))
+                .when(deliveryService).sendPasswordReset(any(User.class), any(), any(), any());
+
+        service.forgotPassword(new ForgotPasswordRequest("user@example.com"), httpRequest);
+
+        verify(tokenRepository).saveAndFlush(any(PasswordResetToken.class));
     }
 
     @Test
@@ -183,7 +233,7 @@ class PasswordManagementServiceTest {
         service.forgotPassword(new ForgotPasswordRequest("missing@example.com"), httpRequest);
 
         verify(eventRepository).save(any(SecurityEvent.class));
-        verify(tokenRepository, never()).save(any());
+        verify(tokenRepository, never()).saveAndFlush(any());
         verify(deliveryService, never()).sendPasswordReset(any(), any());
     }
 
@@ -206,7 +256,7 @@ class PasswordManagementServiceTest {
             service.forgotPassword(new ForgotPasswordRequest("user@example.com"), httpRequest);
         }
 
-        verify(tokenRepository, times(3)).save(any(PasswordResetToken.class));
+        verify(tokenRepository, times(3)).saveAndFlush(any(PasswordResetToken.class));
     }
 
     @Test
@@ -218,7 +268,7 @@ class PasswordManagementServiceTest {
 
         service.forgotPassword(new ForgotPasswordRequest("user@example.com"), httpRequest);
 
-        verify(tokenRepository, never()).save(any());
+        verify(tokenRepository, never()).saveAndFlush(any());
         verify(deliveryService, never()).sendPasswordReset(any(), any());
     }
 
@@ -236,7 +286,7 @@ class PasswordManagementServiceTest {
 
         service.forgotPassword(new ForgotPasswordRequest("user@example.com"), httpRequest);
 
-        verify(tokenRepository, never()).save(any());
+        verify(tokenRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -249,7 +299,7 @@ class PasswordManagementServiceTest {
 
         service.forgotPassword(new ForgotPasswordRequest("user@example.com"), httpRequest);
 
-        verify(tokenRepository, never()).save(any());
+        verify(tokenRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -266,7 +316,23 @@ class PasswordManagementServiceTest {
         assertThat(user.getPassword()).isEqualTo("new-hash");
         assertThat(token.getUsedAt()).isEqualTo(NOW);
         verify(tokenRepository).invalidateOtherActiveTokens(7L, 11L, NOW);
-        verify(eventRepository).save(any(SecurityEvent.class));
+        verify(eventRepository).saveAndFlush(any(SecurityEvent.class));
+    }
+
+    @Test
+    void resetCompletionUsesLanguagePreservedOnToken() {
+        PasswordResetToken token = validToken();
+        token.setRequestedLanguage(PreferredLanguage.EN);
+        when(tokenCodec.hash("raw-token")).thenReturn("hashed-token");
+        when(tokenRepository.findByTokenHashForUpdate("hashed-token")).thenReturn(Optional.of(token));
+        when(passwordEncoder.matches("new-password", "current-hash")).thenReturn(false);
+        when(passwordEncoder.encode("new-password")).thenReturn("new-hash");
+
+        service.resetPassword(new ResetPasswordRequest("raw-token", "new-password"), httpRequest);
+
+        verify(emailOutboxService).enqueue(
+                eq(com.djorka.incidentops.model.TransactionalEmailType.PASSWORD_RESET_COMPLETED),
+                eq(user), eq(PreferredLanguage.EN), any(), eq("password-reset-completed/15"));
     }
 
     @Test
@@ -286,6 +352,8 @@ class PasswordManagementServiceTest {
         when(tokenCodec.hash("used")).thenReturn("used-hash");
         when(tokenRepository.findByTokenHashForUpdate("used-hash")).thenReturn(Optional.of(used));
         assertInvalidReset("used");
+
+        verify(emailOutboxService, never()).enqueue(any(), any(), any(), any(), any());
     }
 
     @Test

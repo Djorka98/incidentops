@@ -6,6 +6,7 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -13,6 +14,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -22,6 +24,21 @@ import static org.springframework.security.config.Customizer.withDefaults;
 
 @Configuration
 public class SecurityConfig {
+
+        @Bean
+        public CronSecretAuthorizationFilter cronSecretAuthorizationFilter(
+                        @Value("${app.email.cron-secret:}") String cronSecret) {
+                return new CronSecretAuthorizationFilter(cronSecret);
+        }
+
+        @Bean
+        public FilterRegistrationBean<CronSecretAuthorizationFilter> disableCronFilterServletRegistration(
+                        CronSecretAuthorizationFilter filter) {
+                FilterRegistrationBean<CronSecretAuthorizationFilter> registration =
+                                new FilterRegistrationBean<>(filter);
+                registration.setEnabled(false);
+                return registration;
+        }
 
         @Bean
         public JwtAuthenticationConverter jwtAuthenticationConverter() {
@@ -41,7 +58,8 @@ public class SecurityConfig {
         @Bean
         public SecurityFilterChain securityFilterChain(
                         HttpSecurity http,
-                        JwtAuthenticationConverter jwtAuthenticationConverter) throws Exception {
+                        JwtAuthenticationConverter jwtAuthenticationConverter,
+                        CronSecretAuthorizationFilter cronSecretAuthorizationFilter) throws Exception {
 
                 http
                                 .csrf(csrf -> csrf.disable())
@@ -65,6 +83,16 @@ public class SecurityConfig {
                                                                 HttpMethod.PATCH,
                                                                 "/api/auth/password")
                                                 .authenticated()
+
+                                                .requestMatchers(
+                                                                HttpMethod.PATCH,
+                                                                "/api/account/preferences")
+                                                .authenticated()
+
+                                                .requestMatchers(
+                                                                HttpMethod.GET,
+                                                                "/internal/email-outbox/process")
+                                                .hasRole("INTERNAL")
                                                 .requestMatchers("/error").permitAll()
 
                                                 .requestMatchers(
@@ -117,7 +145,11 @@ public class SecurityConfig {
                                                 .authenticated())
 
                                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(
-                                                jwtAuthenticationConverter)));
+                                                jwtAuthenticationConverter)))
+
+                                .addFilterBefore(
+                                                cronSecretAuthorizationFilter,
+                                                BearerTokenAuthenticationFilter.class);
 
                 return http.build();
         }

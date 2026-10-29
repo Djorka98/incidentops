@@ -9,6 +9,8 @@ import com.djorka.incidentops.model.PasswordResetToken;
 import com.djorka.incidentops.model.SecurityEvent;
 import com.djorka.incidentops.model.SecurityEventType;
 import com.djorka.incidentops.model.User;
+import com.djorka.incidentops.model.PreferredLanguage;
+import com.djorka.incidentops.model.TransactionalEmailType;
 import com.djorka.incidentops.repository.PasswordResetTokenRepository;
 import com.djorka.incidentops.repository.SecurityEventRepository;
 import com.djorka.incidentops.repository.UserRepository;
@@ -24,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -50,6 +53,8 @@ public class PasswordManagementService {
     private final PasswordResetLinkBuilder resetLinkBuilder;
     private final PasswordResetDeliveryService deliveryService;
     private final ClientIpResolver clientIpResolver;
+    private final PreferredLanguageResolver languageResolver;
+    private final EmailOutboxService emailOutboxService;
     private final Clock applicationClock;
 
     @Transactional
@@ -79,9 +84,16 @@ public class PasswordManagementService {
 
         user.setPassword(passwordEncoder.encode(request.newPassword()));
         passwordResetTokenRepository.invalidateActiveTokens(user.getId(), now);
-        securityEventRepository.save(securityEvent(
+        SecurityEvent changeEvent = securityEventRepository.saveAndFlush(securityEvent(
                 user, normalizeEmail(user.getEmail()), SecurityEventType.PASSWORD_CHANGED,
                 null, null, now));
+        PreferredLanguage language = languageResolver.resolve(null, user);
+        emailOutboxService.enqueue(
+                TransactionalEmailType.PASSWORD_CHANGED,
+                user,
+                language,
+                Map.of(),
+                "password-changed/" + changeEvent.getId());
     }
 
     @Transactional
@@ -103,20 +115,23 @@ public class PasswordManagementService {
             return;
         }
 
+        PreferredLanguage language = languageResolver.resolve(request.language(), user.get());
         passwordResetTokenRepository.invalidateActiveTokens(user.get().getId(), now);
         String rawToken = tokenCodec.generateRawToken();
-        passwordResetTokenRepository.save(PasswordResetToken.builder()
+        PasswordResetToken newResetToken = PasswordResetToken.builder()
                 .user(user.get())
                 .tokenHash(tokenCodec.hash(rawToken))
                 .createdAt(now)
                 .expiresAt(now.plus(RESET_TOKEN_LIFETIME))
-                .build());
+                .build();
+        newResetToken.setRequestedLanguage(language);
+        PasswordResetToken resetToken = passwordResetTokenRepository.saveAndFlush(newResetToken);
 
         resetLinkBuilder.build(rawToken).ifPresent(resetUrl -> {
             try {
-                deliveryService.sendPasswordReset(user.get().getEmail(), resetUrl);
+                deliveryService.sendPasswordReset(user.get(), resetUrl, language, resetToken.getId());
             } catch (RuntimeException ignored) {
-                // The public response stays generic. A provider can add private monitoring.
+                // The public response remains generic and delivery failure is audited privately.
             }
         });
     }
@@ -141,10 +156,19 @@ public class PasswordManagementService {
         user.setPassword(passwordEncoder.encode(request.newPassword()));
         token.setUsedAt(now);
         passwordResetTokenRepository.invalidateOtherActiveTokens(user.getId(), token.getId(), now);
-        securityEventRepository.save(securityEvent(
+        SecurityEvent resetEvent = securityEventRepository.saveAndFlush(securityEvent(
                 user, normalizeEmail(user.getEmail()), SecurityEventType.PASSWORD_RESET_COMPLETED,
                 clientIpResolver.resolve(httpRequest).orElse(null),
                 safeUserAgent(httpRequest.getHeader("User-Agent")), now));
+        PreferredLanguage language = token.getRequestedLanguage() != null
+                ? token.getRequestedLanguage()
+                : languageResolver.resolve(null, user);
+        emailOutboxService.enqueue(
+                TransactionalEmailType.PASSWORD_RESET_COMPLETED,
+                user,
+                language,
+                Map.of(),
+                "password-reset-completed/" + resetEvent.getId());
     }
 
     private boolean forgotLimitExceeded(String email, String ipAddress, Instant now) {

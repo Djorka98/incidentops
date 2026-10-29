@@ -3,6 +3,7 @@ package com.djorka.incidentops.dto;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import com.djorka.incidentops.model.PreferredLanguage;
 
 public record RegisterRequest(
 
@@ -17,7 +18,12 @@ public record RegisterRequest(
 
         @NotBlank
         @Size(min = 8, max = 100)
-        String password
+        String password,
+
+        PreferredLanguage language
 
 ) {
+    public RegisterRequest(String name, String email, String password) {
+        this(name, email, password, null);
+    }
 }
